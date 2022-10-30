@@ -2,7 +2,6 @@ import java.util.*;
 import java.io.*;
 import javax.imageio.*;
 import java.awt.image.BufferedImage;
-import java.awt.image.DataBufferByte;
 import java.lang.reflect.Array;
 import java.net.URL;
 
@@ -159,20 +158,23 @@ class Matrix4x4f
 			A31, A32, A33, A34,
 			A41, A42, A43, A44;
 
-	public static final Matrix4x4f IDENTITY = new Matrix4x4f(1, 0, 0, 0,
-			0, 1, 0, 0,
-			0, 0, 1, 0,
-			0, 0, 0, 1);
+	public static final Matrix4x4f IDENTITY = new Matrix4x4f(
+		1, 0, 0, 0,
+		0, 1, 0, 0,
+		0, 0, 1, 0,
+		0, 0, 0, 1);
 
-	public static final Matrix4x4f EMPTY = new Matrix4x4f(0, 0, 0, 0,
-			0, 0, 0, 0,
-			0, 0, 0, 0,
-			0, 0, 0, 0);
+	public static final Matrix4x4f EMPTY = new Matrix4x4f(
+		0, 0, 0, 0,
+		0, 0, 0, 0,
+		0, 0, 0, 0,
+		0, 0, 0, 0);
 
 	public Matrix4x4f(float a11, float a12, float a13, float a14,
-			float a21, float a22, float a23, float a24,
-			float a31, float a32, float a33, float a34,
-			float a41, float a42, float a43, float a44) {
+		float a21, float a22, float a23, float a24,
+		float a31, float a32, float a33, float a34,
+		float a41, float a42, float a43, float a44)
+	{
 		A11 = a11;
 		A12 = a12;
 		A13 = a13;
@@ -196,10 +198,11 @@ class Matrix4x4f
 
 	public static Matrix4x4f scale(Vector3f input)
 	{
-		return new Matrix4x4f(input.X, 0, 0, 0,
-				0, input.Y, 0, 0,
-				0, 0, input.Z, 0,
-				0, 0, 0, 1);
+		return new Matrix4x4f(
+			input.X, 0, 0, 0,
+			0, input.Y, 0, 0,
+			0, 0, input.Z, 0,
+			0, 0, 0, 1);
 	}
 
 	public static Matrix4x4f rotation(Vector4f q)
@@ -252,7 +255,8 @@ class Matrix4x4f
 
 	public static Matrix4x4f translation(Vector3f input)
 	{
-		return new Matrix4x4f(1, 0, 0, input.X,
+		return new Matrix4x4f(
+			1, 0, 0, input.X,
 			0, 1, 0, input.Y,
 			0, 0, 1, input.Z,
 			0, 0, 0, 1);
@@ -437,7 +441,7 @@ class Framebuffer<T>
 			coord.Z > 0.1f && coord.Z < farPlane) // TODO: This should be handled by the shader.
 		{
 			int address = (int) coord.X + ((int) coord.Y * bufferSize.X);
-			if (coord.Z < zBuffer[address]) // fragment is nearer the last fragment.
+			if (coord.Z < zBuffer[address]) // Fragment is nearer the last fragment.
 			{
 				buffer[address] = value;
 				zBuffer[address] = coord.Z;
@@ -515,15 +519,34 @@ class BasicShaders
 
 	// TODO: Should this be a framebuffer method?
 	// TODO: Use `XYZUV` as inputs.
+	// TODO: This should discard fragments outside of the bounds of the Z buffer.
 	static XYZUV[] face(Vector3f a, Vector3f b, Vector3f c, Vector2f aUv, Vector2f bUv, Vector2f cUv, Vector2i framebufferSize)
 	{
+		float startX = Math.min(Math.min(a.X, b.X), Math.min(c.X, framebufferSize.X));
+		float endX = Math.max(Math.max(a.X, b.X), Math.max(c.X, 0));
+		float startY = Math.min(Math.min(a.Y, b.Y), Math.min(c.Y, framebufferSize.Y));
+		float endY = Math.max(Math.max(a.Y, b.Y), Math.max(c.Y, 0));
+		float startZ = Math.min(Math.min(a.Z, b.Z), Math.min(c.Z, Float.MAX_VALUE));
+		float endZ = Math.max(Math.max(a.Z, b.Z), Math.max(c.Z, 0));
+
+		// Check if triangle is behind the camera or too far away.
+		if (endZ < 0.01f || startZ > 100.0f)
+		{
+			return new XYZUV[] {};
+		}
+		// Check if triangle is outside of the bound of the framebuffer.
+		if ((endX < 0 || startX > framebufferSize.X) && (endY < 0 || startY > framebufferSize.Y))
+		{
+			return new XYZUV[] {};
+		}
+
 		List<XYZUV> list = new ArrayList<XYZUV>();
 		
 		float area = edgeFunction(a, b, c.X, c.Y);
 
-		for (int y = 0; y < framebufferSize.Y; y++)
+		for (int y = (int) Math.max(0, startY); y < Math.min(framebufferSize.Y, endY); y++)
 		{
-			for (int x = 0; x < framebufferSize.X; x++)
+			for (int x = (int) Math.max(0, startX); x < Math.min(framebufferSize.X, endX); x++)
 			{
 				float w0 = edgeFunction(a, b, x, y);
 				float w1 = edgeFunction(b, c, x, y);
@@ -544,7 +567,7 @@ class BasicShaders
 				}
 			}
 		}
-
+		
 		XYZUV[] ret = new XYZUV[list.size()];
 		list.toArray(ret);
 		return ret;
@@ -564,7 +587,7 @@ class XYZUV
 }
 
 /**
- * A basic 3D renderer for an ANSI X3.64-compliant terminal.
+ * A basic 3D renderer for an ANSI X3.64-compliant terminals/consoles.
  * 
  * @author Unai Domínguez
  */
@@ -786,6 +809,7 @@ class ThreeDee
 		// Enter the main loop that takes care of reading user input, drawing the scene to the framebuffer and render the latter to the standard output.
 		boolean mainLoop = true;
 		int frame = 0;
+		int trianglesPerFrame = 0;
 		float cameraX = 0.0f, cameraY = 0.0f, cameraZ = -1.5f;
 		float movementFactor = 0.5f;
 		while (mainLoop)
@@ -839,19 +863,6 @@ class ThreeDee
 						break;
 				}
 			}
-			/*posX = (frame % (terminalSize.X * 2)) - (terminalSize.X >> 1);
-			//posY = (int)(Math.sin((float)posX) * (terminalSize[1] / 2.0f) + (terminalSize[1] / 2.0f));
-			posY = (int)(terminalSize.Y / 2.0f);
-			
-			for (int y = 0; y < terminalSize.Y - 1; y++)
-			{
-				for (int x = 0; x < terminalSize.X - 1; x++)
-				{
-					float xFactor = Math.abs(x - posX) / (terminalSize.X * 0.25f);
-					float yFactor = Math.abs(y - posY) / (terminalSize.Y * 0.25f);
-					framebuffer[x + (y * terminalSize.X)] = getShadeCharFromFloat(1 - Math.abs(xFactor * yFactor) + ((float)Math.random() % 0.05f));
-				}
-			}*/
 
 			////////////////
 			// DRAW SCENE //
@@ -909,6 +920,10 @@ class ThreeDee
 
 				// Get all the fragments from this triangle.
 				var face = BasicShaders.face(fbc1, fbc2, fbc3, uv1, uv2, uv3, terminalSize);
+				if (face.length > 0)
+				{
+					trianglesPerFrame++;
+				}
 
 				// Render all the fragments to the framebuffer.
 				for (int j = 0; j < face.length; j++)
@@ -917,6 +932,7 @@ class ThreeDee
 					Vector3f fragmentPosition = fragment.XYZ;
 					Vector2f fragmentTexCoords = fragment.UV;
 					Vector3i fragmentColor = texture.getNdcPixel(fragmentTexCoords);
+					// Change fragment's brightness depending on the distance with the camera (only the Z coordinate).
 					fragmentColor = fragmentColor.multiply(1.0f / fragmentPosition.Z);
 					framebuffer.safeSet(fragmentPosition, fragmentColor);
 				}
@@ -974,9 +990,10 @@ class ThreeDee
 			// Print status text on top of the rendered scene.
 			setConsoleCursorPosition(2, terminalSize.Y - 1);
 			System.out.print(getAnsiCodeForFgRgb24(new Vector3i(255, 255, 255)));
-			System.out.print("Frame " + frame + " | " + (int) (1000 * (1.0f / frameTimeMs)) + " FPS  ");
+			System.out.print("Frame " + frame + " | " + (int) (1000 * (1.0f / frameTimeMs)) + " FPS | " + trianglesPerFrame + " triangles  ");
 
 			frame++;
+			trianglesPerFrame = 0;
 		}
 		
 		setConsoleCursorPosition(0, 0);
