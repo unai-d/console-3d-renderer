@@ -586,6 +586,17 @@ class XYZUV
 	}
 }
 
+enum ConsoleRenderMode
+{
+	B0W1, // Black=0, white=1
+	B1W0, // Black=1, white=0
+	GrayscaleChars, // This uses the shaded block Unicode characters without ANSI color escape codes.
+	RGB4, // This uses the standard and widely-supported 4-bit ANSI color escape codes.
+	RGB8, // This uses the paletted 216-color version of the last one.
+	Grayscale24,
+	RGB24
+}
+
 /**
  * A basic 3D renderer for an ANSI X3.64-compliant terminals/consoles.
  * 
@@ -593,6 +604,10 @@ class XYZUV
  */
 class ThreeDee
 {
+	static String textureFile = null;
+	static boolean showLines = false;
+	static ConsoleRenderMode consoleRenderMode = ConsoleRenderMode.RGB24;
+
 	static Framebuffer<Vector3i> framebuffer;
 
 	static Vector3f[] vertices = new Vector3f[]
@@ -609,13 +624,13 @@ class ThreeDee
 		new Vector3f( 0.5f, -0.5f, -0.5f),
 		new Vector3f(-0.5f, -0.5f, -0.5f),
 		
-		// Y+ v
+		// Y+
 		new Vector3f( 0.5f,  0.5f, -0.5f),
 		new Vector3f( 0.5f,  0.5f,  0.5f),
 		new Vector3f(-0.5f,  0.5f,  0.5f),
 		new Vector3f(-0.5f,  0.5f, -0.5f),
 		
-		// Y- v
+		// Y-
 		new Vector3f( 0.5f, -0.5f, -0.5f),
 		new Vector3f( 0.5f, -0.5f,  0.5f),
 		new Vector3f(-0.5f, -0.5f,  0.5f),
@@ -756,6 +771,27 @@ class ThreeDee
 	{
 		boolean isWindows = System.getProperty("os.name").startsWith("Windows");
 
+		// Read the arguments from the command line.
+		for (int i = 0; i < args.length; i++)
+		{
+			String[] argkv = args[i].split("=", 2);
+			switch (argkv[0])
+			{
+				case "-T":
+				case "--texture":
+					textureFile = argkv[1];
+					break;
+
+				case "--show-lines":
+					showLines = true;
+					break;
+
+				case "--color-mode":
+					consoleRenderMode = Enum.valueOf(ConsoleRenderMode.class, argkv[1]);
+					break;
+			}
+		}
+
 		// Enter non-canonical mode (in a not-so-cross-platform way).
 		if (isWindows)
 		{
@@ -803,8 +839,8 @@ class ThreeDee
 		// Create the framebuffer, where all drawing operations will occur. It needs the terminal buffer size that we stored in `terminalSize`.
 		framebuffer = new Framebuffer<Vector3i>(terminalSize.X, terminalSize.Y, new Vector3i(0, 0, 0));
 
-		// Use the URL specified as an argument when calling `ThreeDee`. If no arguments were supplied, use the default texture instead.
-		texture = args.length > 0 ? new Texture(args[0]) : defaultTexture;
+		// Use the URL specified in the texture argument from the command line. If no texture argument is supplied, use the default texture instead.
+		texture = textureFile != null ? new Texture(textureFile) : defaultTexture;
 
 		// Enter the main loop that takes care of reading user input, drawing the scene to the framebuffer and render the latter to the standard output.
 		boolean mainLoop = true;
@@ -938,24 +974,28 @@ class ThreeDee
 				}
 
 				// Draw triangle lines.
-				/*Vector3i lineColor = new Vector3i(255, 255, 255);
-				var line1 = BasicShaders.line(fbc1, fbc2);
-				var line2 = BasicShaders.line(fbc2, fbc3);
-				var line3 = BasicShaders.line(fbc3, fbc1);
-				
-				for (int j = 0; j < line1.length; j++)
+				if (showLines)
 				{
-					framebuffer.safeSet(line1[j], lineColor);
-				}
-				for (int j = 0; j < line2.length; j++)
-				{
-					framebuffer.safeSet(line2[j], lineColor);
-				}
-				for (int j = 0; j < line3.length; j++)
-				{
-					framebuffer.safeSet(line3[j], lineColor);
-				}*/
+					Vector3i lineColor = new Vector3i(255, 255, 255);
+					var line1 = BasicShaders.line(fbc1, fbc2);
+					var line2 = BasicShaders.line(fbc2, fbc3);
+					var line3 = BasicShaders.line(fbc3, fbc1);
 
+					for (int j = 0; j < line1.length; j++)
+					{
+						framebuffer.safeSet(line1[j], lineColor);
+					}
+					for (int j = 0; j < line2.length; j++)
+					{
+						framebuffer.safeSet(line2[j], lineColor);
+					}
+					for (int j = 0; j < line3.length; j++)
+					{
+						framebuffer.safeSet(line3[j], lineColor);
+					}
+				}
+
+				// TODO: Draw triangle vertices.
 				//safeSet(framebuffer, fbc1.X + (fbc1.Y * terminalSize.X), 'o');
 				/*framebuffer.safeSet(fbc1, new Vector3i(255, 0, 0));
 				framebuffer.safeSet(fbc2, new Vector3i(255, 0, 0));
@@ -966,23 +1006,118 @@ class ThreeDee
 			// RENDER FRAMEBUFFER //
 			////////////////////////
 
-			Vector3i lastColor = new Vector3i(0, 0, 0);
-
 			// Set cursor position to x=0, y=0.
 			setConsoleCursorPosition(0, 0);
 
-			for (int y = 0; y < terminalSize.Y - 1; y++)
+			int ansiColorCode = -1;
+
+			switch (consoleRenderMode)
 			{
-				for (int x = 0; x < terminalSize.X - 1; x++)
-				{
-					Vector3i value = framebuffer.get(x + (y * terminalSize.X));
-					if (value != lastColor)
+				case B0W1:
+				case B1W0:
+					for (int y = 0; y < terminalSize.Y - 1; y++)
 					{
-						System.out.print(getAnsiCodeForFgRgb24(value));
+						for (int x = 0; x < terminalSize.X - 1; x++)
+						{
+							Vector3i value = framebuffer.get(x + (y * terminalSize.X));
+							boolean isWhite = ((value.X + value.Y + value.Z) / 3) > 127;
+							
+							System.out.print((isWhite ^ consoleRenderMode == ConsoleRenderMode.B1W0) ? '█' : ' ');
+						}
+						System.out.print("\u001b[1E"); // Move to the beginning of the next line.
 					}
-					System.out.print('█');
-				}
-				System.out.print("\u001b[1E"); // Move to the beginning of the next line.
+					break;
+
+				case GrayscaleChars:
+					for (int y = 0; y < terminalSize.Y - 1; y++)
+					{
+						for (int x = 0; x < terminalSize.X - 1; x++)
+						{
+							Vector3i value = framebuffer.get(x + (y * terminalSize.X));
+							char charOut = getShadeCharFromFloat(((value.X + value.Y + value.Z) / 3) / 256.0f);
+							
+							System.out.print(charOut);
+						}
+						System.out.print("\u001b[1E"); // Move to the beginning of the next line.
+					}
+					break;
+
+				case RGB4:
+					int lastColorRgb4 = -1;
+
+					for (int y = 0; y < terminalSize.Y - 1; y++)
+					{
+						for (int x = 0; x < terminalSize.X - 1; x++)
+						{
+							Vector3i value = framebuffer.get(x + (y * terminalSize.X));
+							boolean isBright = ((value.X + value.Y + value.Z) / 3) > 127;
+							int threshold = isBright ? 192 : 64; // 0 - 64 - 128 - 192 - 256
+							ansiColorCode = isBright ? 90 : 30;
+							if (value.X > threshold)
+								ansiColorCode += 1;
+							if (value.Y > threshold)
+								ansiColorCode += 2;
+							if (value.Z > threshold)
+								ansiColorCode += 4;
+							if (ansiColorCode != lastColorRgb4)
+							{
+								System.out.print("\u001b[" + ansiColorCode + "m");
+								lastColorRgb4 = ansiColorCode;
+							}
+							System.out.print('█');
+						}
+						System.out.print("\u001b[1E"); // Move to the beginning of the next line.
+					}
+					break;
+
+				case RGB8:
+					int lastColorRgb8 = -1;
+
+					for (int y = 0; y < terminalSize.Y - 1; y++)
+					{
+						for (int x = 0; x < terminalSize.X - 1; x++)
+						{
+							Vector3i value = framebuffer.get(x + (y * terminalSize.X));
+							int r = Math.min((int) ((value.X / 256.0f) * 6), 5) * 36;
+							int g = Math.min((int) ((value.Y / 256.0f) * 6), 5) * 6;
+							int b = Math.min((int) ((value.Z / 256.0f) * 6), 5);
+							//if (0 <= value.X && value.Z <= 5)
+							ansiColorCode = 16 + r + g + b;
+							if (ansiColorCode != lastColorRgb8)
+							{
+								System.out.print("\u001b[38;5;" + ansiColorCode + "m");
+								lastColorRgb4 = ansiColorCode;
+							}
+							System.out.print('█');
+						}
+						System.out.print("\u001b[1E"); // Move to the beginning of the next line.
+					}
+					break;
+
+				case RGB24:
+					Vector3i lastColor = new Vector3i(0, 0, 0);
+
+					for (int y = 0; y < terminalSize.Y - 1; y++)
+					{
+						for (int x = 0; x < terminalSize.X - 1; x++)
+						{
+							Vector3i value = framebuffer.get(x + (y * terminalSize.X));
+							if (value != lastColor)
+							{
+								System.out.print(getAnsiCodeForFgRgb24(value));
+								lastColor = value;
+							}
+							System.out.print('█');
+						}
+						System.out.print("\u001b[1E"); // Move to the beginning of the next line.
+					}
+					break;
+
+				default:
+					setConsoleCursorPosition(2, terminalSize.Y / 2);
+					System.out.print("Render mode not supported: " + consoleRenderMode);
+					mainLoop = false;
+					break;
 			}
 
 			long frameTimeMs = System.currentTimeMillis() - startFrameTimeMs;
