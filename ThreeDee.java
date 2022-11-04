@@ -5,6 +5,7 @@ import java.awt.image.BufferedImage;
 import java.lang.reflect.Array;
 import java.net.URL;
 
+//#region Primitive types
 class Vector2i
 {
 	public int X, Y;
@@ -317,7 +318,9 @@ class Matrix4x4f
 		return new Matrix4x4f(r11, r12, r13, r14, r21, r22, r23, r24, r31, r32, r33, r34, r41, r42, r43, r44);
 	}
 }
+//#endregion
 
+//#region Drawing types
 class Texture
 {
 	int width, height;
@@ -573,6 +576,7 @@ class BasicShaders
 		return ret;
 	}
 }
+//#endregion
 
 class XYZUV
 {
@@ -598,7 +602,7 @@ enum ConsoleRenderMode
 }
 
 /**
- * A basic 3D renderer for an ANSI X3.64-compliant terminals/consoles.
+ * A basic 3D renderer for ANSI X3.64-compliant terminals/consoles.
  * 
  * @author Unai Domínguez
  */
@@ -763,14 +767,13 @@ class ThreeDee
 
 	public static void setConsoleCursorPosition(int x, int y)
 	{
-		// ANSI escape codes are mostly one-indexed when handling coordinates.
 		System.out.print("\u001b[" + (y + 1) + ";" + (x + 1) + "H");
 	}
+	
+	public static boolean IsWindows = System.getProperty("os.name").startsWith("Windows");
 
 	public static void main(String[] args) throws InterruptedException, IOException, Exception
 	{
-		boolean isWindows = System.getProperty("os.name").startsWith("Windows");
-
 		// Read the arguments from the command line.
 		for (int i = 0; i < args.length; i++)
 		{
@@ -793,9 +796,9 @@ class ThreeDee
 		}
 
 		// Enter non-canonical mode (in a not-so-cross-platform way).
-		if (isWindows)
+		if (IsWindows)
 		{
-			throw new Exception("Non-canonical mode not supported in Windows.");
+			//throw new Exception("Non-canonical mode not supported in Windows.");
 		}
 		else
 		{
@@ -803,37 +806,69 @@ class ThreeDee
 			Runtime.getRuntime().exec(nonCanonicalModeCmdUnix).waitFor();
 		}
 
-		// Get the terminal buffer size using ANSI escape codes.
-		// FIXME: This doesn't seem to work with Windows.
-		System.out.print(
-			"\u001b[s" +			// Save the cursor position in an internal register.
-			"\u001b[1024;1024H" +	// Move the cursor to a ridiculously high number of columns and rows.
-			"\u001b[6n" +			// Print the current *actual* position of the cursor to `stdin`.
-			"\u001b[u"				// Restore the cursor position that was saved earlier from that internal register.
-		);
-
-		// It's not guaranteed that the data we want will be immediately available since the terminal seems to return the data asynchronously.
-		// The program basically needs to wait for the data to be available on `stdin`.
-		while (System.in.available() < 6)
-		{}
-		
-		// Get the ANSI escape code from `stdin`, containing the total number of rows and columns (in that order).
-		String terminalSizeRawAnsi = "";
-		while (System.in.available() > 0)
+		// Get the terminal buffer size.
+		Vector2i terminalSize = new Vector2i(80, 25);
+		if (IsWindows)
 		{
-			char input = (char) System.in.read();
-			terminalSizeRawAnsi += input;
-			if (input == 'R') // 'R' marks the end of this specific ANSI escape code.
+			// This is the worst way of retrieving the data, but that's just how Windows works.
+			// The terminal size is retrieved by the following PowerShell processes.
+			var widthProc = new ProcessBuilder("powershell", "-NoP", "-command", "$Host.ui.rawui.windowsize.width").redirectInput(ProcessBuilder.Redirect.INHERIT).start();
+			var heightProc = new ProcessBuilder("powershell", "-NoP", "-command", "$Host.ui.rawui.windowsize.height").redirectInput(ProcessBuilder.Redirect.INHERIT).start();
+			widthProc.waitFor();
+			heightProc.waitFor();
+
+			BufferedReader widthReader = new BufferedReader(new InputStreamReader(widthProc.getInputStream()));
+			BufferedReader heightReader = new BufferedReader(new InputStreamReader(heightProc.getInputStream()));
+
+			String widthString = "", heightString = "", line = "";
+			while ((line = widthReader.readLine()) != null)
 			{
-				System.err.println(terminalSizeRawAnsi);
-				break;
+				widthString += line;
 			}
+			while ((line = heightReader.readLine()) != null)
+			{
+				heightString += line;
+			}
+
+			int width = Integer.parseInt(widthString);
+			int height = Integer.parseInt(heightString);
+			
+			terminalSize = new Vector2i(width, height);
+		}
+		else
+		{
+			// Use ANSI escape codes to retrieve the terminal buffer size.
+			System.out.print(
+				"\u001b[s" +			// Save the cursor position in an internal register.
+				"\u001b[1024;1024H" +	// Move the cursor to a ridiculously high number of columns and rows.
+				"\u001b[6n" +			// Print the current *actual* position of the cursor to `stdin`.
+				"\u001b[u"				// Restore the cursor position that was saved earlier from that internal register.
+			);
+
+			// It's not guaranteed that the data we want will be immediately available since the terminal seems to return the data asynchronously.
+			// The program basically needs to wait for the data to be available on `stdin`.
+			while (System.in.available() < 6)
+			{}
+			
+			// Get the ANSI escape code from `stdin`, containing the total number of rows and columns (in that order).
+			String terminalSizeRawAnsi = "";
+			while (System.in.available() > 0)
+			{
+				char input = (char) System.in.read();
+				terminalSizeRawAnsi += input;
+				if (input == 'R') // 'R' marks the end of this specific ANSI escape code.
+				{
+					System.err.println(terminalSizeRawAnsi);
+					break;
+				}
+			}
+
+			// Parse the ANSI escape code.
+			String[] terminalSizeRawTup = terminalSizeRawAnsi.substring(2, terminalSizeRawAnsi.length() - 1).split("\\;");
+			// Create a `Vector2i` that contains the number of columns and rows (in that order).
+			terminalSize = new Vector2i(Integer.parseInt(terminalSizeRawTup[1]), Integer.parseInt(terminalSizeRawTup[0]));
 		}
 
-		// Parse the ANSI escape code.
-		String[] terminalSizeRawTup = terminalSizeRawAnsi.substring(2, terminalSizeRawAnsi.length() - 1).split("\\;");
-		// Create a `Vector2i` that contains the number of columns and rows (in that order).
-		Vector2i terminalSize = new Vector2i(Integer.parseInt(terminalSizeRawTup[1]), Integer.parseInt(terminalSizeRawTup[0]));
 		System.out.printf("Resolution is %s×%s%n", terminalSize.X, terminalSize.Y);
 
 		// Create the framebuffer, where all drawing operations will occur. It needs the terminal buffer size that we stored in `terminalSize`.
@@ -1022,9 +1057,9 @@ class ThreeDee
 							Vector3i value = framebuffer.get(x + (y * terminalSize.X));
 							boolean isWhite = ((value.X + value.Y + value.Z) / 3) > 127;
 							
-							System.out.print((isWhite ^ consoleRenderMode == ConsoleRenderMode.B1W0) ? '█' : ' ');
+							System.out.print((isWhite ^ consoleRenderMode == ConsoleRenderMode.B1W0) ? '\u2588' : ' ');
 						}
-						System.out.print("\u001b[1E"); // Move to the beginning of the next line.
+						System.out.print(IsWindows ? '\n' : "\u001b[1E"); // Move to the beginning of the next line.
 					}
 					break;
 
@@ -1038,7 +1073,7 @@ class ThreeDee
 							
 							System.out.print(charOut);
 						}
-						System.out.print("\u001b[1E"); // Move to the beginning of the next line.
+						System.out.print(IsWindows ? '\n' : "\u001b[1E"); // Move to the beginning of the next line.
 					}
 					break;
 
@@ -1064,9 +1099,9 @@ class ThreeDee
 								System.out.print("\u001b[" + ansiColorCode + "m");
 								lastColorRgb4 = ansiColorCode;
 							}
-							System.out.print('█');
+							System.out.print('\u2588');
 						}
-						System.out.print("\u001b[1E"); // Move to the beginning of the next line.
+						System.out.print(IsWindows ? '\n' : "\u001b[1E"); // Move to the beginning of the next line.
 					}
 					break;
 
@@ -1088,9 +1123,9 @@ class ThreeDee
 								System.out.print("\u001b[38;5;" + ansiColorCode + "m");
 								lastColorRgb4 = ansiColorCode;
 							}
-							System.out.print('█');
+							System.out.print('\u2588');
 						}
-						System.out.print("\u001b[1E"); // Move to the beginning of the next line.
+						System.out.print(IsWindows ? '\n' : "\u001b[1E"); // Move to the beginning of the next line.
 					}
 					break;
 
@@ -1107,9 +1142,9 @@ class ThreeDee
 								System.out.print(getAnsiCodeForFgRgb24(value));
 								lastColor = value;
 							}
-							System.out.print('█');
+							System.out.print('\u2588');
 						}
-						System.out.print("\u001b[1E"); // Move to the beginning of the next line.
+						System.out.print(IsWindows ? '\n' : "\u001b[1E"); // Move to the beginning of the next line.
 					}
 					break;
 
@@ -1134,7 +1169,7 @@ class ThreeDee
 		setConsoleCursorPosition(0, 0);
 		
 		// Revert changes to the terminal input mode (canonical mode is a must-have when returning to the shell).
-		if (!isWindows)
+		if (!IsWindows)
 		{
 			String[] canonicalModeCmdUnix = { "/bin/sh", "-c", "stty cooked < /dev/tty" };
 			Runtime.getRuntime().exec(canonicalModeCmdUnix).waitFor();
@@ -1151,23 +1186,23 @@ class ThreeDee
 		char output = ' ';
 		if (Float.isInfinite(input))
 		{
-			output = '∞';
+			output = '\u221e';
 		}
 		else if (input >= 0.2f && input < 0.4f)
 		{
-			output = '░';
+			output = '\u2591';
 		}
 		else if (input >= 0.4f && input < 0.6f)
 		{
-			output = '▒';
+			output = '\u2592';
 		}
 		else if (input >= 0.6f && input < 0.8f)
 		{
-			output = '▓';
+			output = '\u2593';
 		}
 		else if (input >= 0.8f)
 		{
-			output = '█';
+			output = '\u2588';
 		}
 
 		return output;
