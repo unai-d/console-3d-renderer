@@ -879,14 +879,12 @@ class ThreeDee
 
 		// Enter the main loop that takes care of reading user input, drawing the scene to the framebuffer and render the latter to the standard output.
 		boolean mainLoop = true;
-		int frame = 0;
-		int trianglesPerFrame = 0;
+		int frame = 0, currentSecondFrame = 0, framesPerSecond = 0, trianglesPerFrame = 0;
+		long lastSecondTimestamp = System.currentTimeMillis();
 		float cameraX = 0.0f, cameraY = 0.0f, cameraZ = -1.5f;
 		float movementFactor = 0.5f;
 		while (mainLoop)
 		{
-			long startFrameTimeMs = System.currentTimeMillis();
-
 			////////////////////////
 			// PROCESS USER INPUT //
 			////////////////////////
@@ -1155,15 +1153,25 @@ class ThreeDee
 					break;
 			}
 
-			long frameTimeMs = System.currentTimeMillis() - startFrameTimeMs;
-
 			// Print status text on top of the rendered scene.
 			setConsoleCursorPosition(2, terminalSize.Y - 1);
 			System.out.print(getAnsiCodeForFgRgb24(new Vector3i(255, 255, 255)));
-			System.out.print("Frame " + frame + " | " + (int) (1000 * (1.0f / frameTimeMs)) + " FPS | " + trianglesPerFrame + " triangles  ");
+			System.out.print("Frame " + frame + " | " + framesPerSecond + " FPS | " + trianglesPerFrame + " triangles  ");
 
+			// Update frame data.
 			frame++;
+			currentSecondFrame++;
 			trianglesPerFrame = 0;
+
+			// Check if more than one second has passed.
+			// In that case, update the FPS counter.
+			long currentTimestamp = System.currentTimeMillis();
+			if (currentTimestamp > lastSecondTimestamp + 1000)
+			{
+				lastSecondTimestamp = currentTimestamp;
+				framesPerSecond = currentSecondFrame;
+				currentSecondFrame = 0;
+			}
 		}
 		
 		setConsoleCursorPosition(0, 0);
