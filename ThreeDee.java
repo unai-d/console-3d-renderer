@@ -4,6 +4,8 @@ import javax.imageio.*;
 import java.awt.image.BufferedImage;
 import java.lang.reflect.Array;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 
 //#region Primitive types
 class Vector2i
@@ -601,6 +603,73 @@ enum ConsoleRenderMode
 	RGB24
 }
 
+class WindowsInterop
+{
+	// Source: https://learn.microsoft.com/es-es/windows/console/setconsolemode
+
+	static final String CSHARP_OVER_POWERSHELL_INTEROP_KERNEL32 = "$sigKernel32 = @'\n" +
+		"[DllImport(\"kernel32.dll\", SetLastError = true)]\n" + 
+		"public static extern IntPtr GetStdHandle(int nStdHandle);\n" +
+		"[DllImport(\"kernel32.dll\", SetLastError = true)]\n" +
+		"public static extern uint GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);\n" +
+		"[DllImport(\"kernel32.dll\", SetLastError = true)]\n" + 
+		"public static extern uint SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);\n" +
+		"public const int STD_INPUT_HANDLE = -10;\n" + 
+		"'@\n";
+
+	static final String POWERSHELL_GET_STDIN_HANDLE = CSHARP_OVER_POWERSHELL_INTEROP_KERNEL32 +
+		"$Kernel32Api = Add-Type -MemberDefinition $sigKernel32 -Name Kernel32Api -Namespace ThreeDee -PassThru\n" +
+		"$handle = $Kernel32Api::GetStdHandle($Kernel32Api::STD_INPUT_HANDLE)\n" +
+		"if ($handle -eq -1) {\n" +
+		"	throw \"Cannot get standard input handle.\"\n" +
+		"}\n";
+
+	public static final int KERNEL32_ENABLE_PROCESSED_INPUT = 0x0001;
+	public static final int KERNEL32_ENABLE_LINE_INPUT = 0x0002;
+	public static final int KERNEL32_ENABLE_ECHO_INPUT = 0x0004;
+
+	public static String getStdinModeChangePowershellScript(int flag, boolean enable)
+	{
+		return POWERSHELL_GET_STDIN_HANDLE +
+			"$mode = 0\n" + 
+			"$ret = $Kernel32Api::GetConsoleMode($handle, [ref]$mode)\n" +
+			"if ($ret -eq 0) {\n" +
+			"	throw \"Cannot get standard input mode.\"\n" +
+			"}\n" + 
+			// "Echo \"Console mode is $mode\"\n" +
+			"$newmode = $mode " +
+			(
+				enable ?
+				"-bor " + flag :
+				"-band (-bnot " + flag + ")"
+			) + "\n" + 
+			// "Echo \"New console mode is $newmode\"\n" + 
+			"$ret = $Kernel32Api::SetConsoleMode($handle, $newmode)\n" +
+			"if ($ret -eq 0) {\n" +
+			"	throw \"Cannot set standard input mode.\"\n" +
+			"}\n" + 
+			"$ret = $Kernel32Api::GetConsoleMode($handle, [ref]$mode)\n";
+			// "Echo \"Console mode is now $mode\"\n";
+	}
+
+	public static void runPowershellScript(String script) throws Exception, IOException, InterruptedException
+	{
+		String wrappedScript = "& {\n" + script + "\n}";
+
+		Base64.Encoder b64enc = Base64.getEncoder();
+		String encodedScript = b64enc.encodeToString(wrappedScript.getBytes(StandardCharsets.UTF_16LE));
+
+		Process powershellProcess = new ProcessBuilder("powershell", "-NoP", "-NonInteractive", "-EncodedCommand", encodedScript)
+			.inheritIO().start();
+		int powershellStatus = powershellProcess.waitFor();
+
+		if (powershellStatus != 0)
+		{
+			throw new Exception("Powershell script failed with status code " + powershellStatus + ".");
+		}
+	}
+}
+
 /**
  * A basic 3D renderer for ANSI X3.64-compliant terminals/consoles.
  * 
@@ -613,6 +682,11 @@ class ThreeDee
 	static ConsoleRenderMode consoleRenderMode = ConsoleRenderMode.RGB24;
 
 	static Framebuffer<Vector3i> framebuffer;
+
+	// Runtime registers
+	static boolean MainLoop = true;
+	static float CameraX = 0.0f, CameraY = 0.0f, CameraZ = -1.5f;
+	static float MovementFactor = 0.5f;
 
 	static Vector3f[] vertices = new Vector3f[]
 	{
@@ -769,6 +843,53 @@ class ThreeDee
 	{
 		System.out.print("\u001b[" + (y + 1) + ";" + (x + 1) + "H");
 	}
+
+	public static void processUserInput() throws IOException
+	{
+		// This polls all pending characters from `stdin` each frame.
+		if (IsWindows ? true : System.in.available() > 0)
+		{
+			char input = (char) System.in.read();
+			switch (input)
+			{
+				case 'q':
+					MainLoop = false;
+					break;
+
+				case 'w':
+					CameraZ += MovementFactor;
+					break;
+
+				case 'W':
+					CameraZ += MovementFactor * 5;
+					break;
+
+				case 's':
+					CameraZ -= MovementFactor;
+					break;
+
+				case 'S':
+					CameraZ -= MovementFactor * 5;
+					break;
+
+				case 'a':
+					CameraX -= MovementFactor;
+					break;
+
+				case 'd':
+					CameraX += MovementFactor;
+					break;
+
+				case 'z':
+					CameraY -= MovementFactor;
+					break;
+
+				case 'x':
+					CameraY += MovementFactor;
+					break;
+			}
+		}
+	}
 	
 	public static boolean IsWindows = System.getProperty("os.name").startsWith("Windows");
 
@@ -798,7 +919,10 @@ class ThreeDee
 		// Enter non-canonical mode (in a not-so-cross-platform way).
 		if (IsWindows)
 		{
-			//throw new Exception("Non-canonical mode not supported in Windows.");
+			int consoleModeFlags = WindowsInterop.KERNEL32_ENABLE_LINE_INPUT | 
+				WindowsInterop.KERNEL32_ENABLE_PROCESSED_INPUT |
+				WindowsInterop.KERNEL32_ENABLE_ECHO_INPUT;
+			WindowsInterop.runPowershellScript(WindowsInterop.getStdinModeChangePowershellScript(consoleModeFlags, false));
 		}
 		else
 		{
@@ -878,59 +1002,40 @@ class ThreeDee
 		texture = textureFile != null ? new Texture(textureFile) : defaultTexture;
 
 		// Enter the main loop that takes care of reading user input, drawing the scene to the framebuffer and render the latter to the standard output.
-		boolean mainLoop = true;
 		int frame = 0, currentSecondFrame = 0, framesPerSecond = 0, trianglesPerFrame = 0;
 		long lastSecondTimestamp = System.currentTimeMillis();
-		float cameraX = 0.0f, cameraY = 0.0f, cameraZ = -1.5f;
-		float movementFactor = 0.5f;
-		while (mainLoop)
+
+		// On Windows, user input needs to be processed asynchronously, because all `InputStream` methods seem to block the thread until a character is read.
+		if (IsWindows)
+		{
+			Thread userInputThread = new Thread(() ->
+			{
+				try
+				{
+					while (MainLoop)
+					{
+						processUserInput();
+						Thread.sleep(167);
+					}
+				}
+				catch (Exception ex)
+				{
+					System.err.println("Cannot process user input: " + ex.getMessage());
+				}
+			});
+			userInputThread.start();
+		}
+
+		while (MainLoop)
 		{
 			////////////////////////
 			// PROCESS USER INPUT //
 			////////////////////////
 
-			// This polls all pending characters from `stdin` each frame.
-			if (System.in.available() > 0)
+			// AFAIK, this method is non-blocking when running on Linux.
+			if (!IsWindows)
 			{
-				char input = (char) System.in.read();
-				switch (input)
-				{
-					case 'q':
-						mainLoop = false;
-						break;
-
-					case 'w':
-						cameraZ += movementFactor;
-						break;
-
-					case 'W':
-						cameraZ += movementFactor * 5;
-						break;
-
-					case 's':
-						cameraZ -= movementFactor;
-						break;
-
-					case 'S':
-						cameraZ -= movementFactor * 5;
-						break;
-
-					case 'a':
-						cameraX -= movementFactor;
-						break;
-
-					case 'd':
-						cameraX += movementFactor;
-						break;
-
-					case 'z':
-						cameraY -= movementFactor;
-						break;
-
-					case 'x':
-						cameraY += movementFactor;
-						break;
-				}
+				processUserInput();
 			}
 
 			////////////////
@@ -940,7 +1045,7 @@ class ThreeDee
 			framebuffer.clear();
 
 			//Matrix4x4f projectionMatrix = Matrix4x4f.projection(180.0f, 0.01f, 100.0f);
-			Matrix4x4f translationMatrix = Matrix4x4f.translation(new Vector3f(-cameraX, -cameraY, -cameraZ));
+			Matrix4x4f translationMatrix = Matrix4x4f.translation(new Vector3f(-CameraX, -CameraY, -CameraZ));
 			Matrix4x4f rotationMatrix = Matrix4x4f.rotation(Vector4f.fromEulerAngles(frame / 45.0f, 0, frame / 30.0f));
 			Matrix4x4f aspectRatioMatrix = Matrix4x4f.scale(new Vector3f(2.25f * terminalSize.Y / (float) terminalSize.X, 1.0f, 1.0f));
 
@@ -1149,7 +1254,7 @@ class ThreeDee
 				default:
 					setConsoleCursorPosition(2, terminalSize.Y / 2);
 					System.out.print("Render mode not supported: " + consoleRenderMode);
-					mainLoop = false;
+					MainLoop = false;
 					break;
 			}
 

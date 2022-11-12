@@ -3,8 +3,6 @@
 Everything in this program is written in a single file (`ThreeDee.java`) and thus, it must be compiled with `javac`.
 That is, without compilation chains like Gradle or Maven.
 
-**Note**: when running on Windows, always remember to press Enter after every keystroke during execution, since this program cannot switch to non-canonical console mode on this operating system yet.
-
 ## Benchmarks
 Go to [`BENCHMARKS.md`](BENCHMARKS.md) to see all the details about performance.
 
