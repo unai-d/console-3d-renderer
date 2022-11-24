@@ -6,6 +6,7 @@ import java.lang.reflect.Array;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.stream.Collectors;
 
 //#region Primitive types
 class Vector2i
@@ -652,21 +653,38 @@ class WindowsInterop
 			// "Echo \"Console mode is now $mode\"\n";
 	}
 
-	public static void runPowershellScript(String script) throws Exception, IOException, InterruptedException
+	public static String runPowershellScript(String script) throws Exception, IOException, InterruptedException
 	{
-		String wrappedScript = "& {\n" + script + "\n}";
+		ProcessBuilder powershellProcessBuilder = null;
+		if (script.contains("\n"))
+		{
+			String wrappedScript = "& {\n" + script + "\n}";
 
-		Base64.Encoder b64enc = Base64.getEncoder();
-		String encodedScript = b64enc.encodeToString(wrappedScript.getBytes(StandardCharsets.UTF_16LE));
+			Base64.Encoder b64enc = Base64.getEncoder();
+			String encodedScript = b64enc.encodeToString(wrappedScript.getBytes(StandardCharsets.UTF_16LE));
 
-		Process powershellProcess = new ProcessBuilder("powershell", "-NoP", "-NonInteractive", "-EncodedCommand", encodedScript)
-			.inheritIO().start();
+			powershellProcessBuilder = new ProcessBuilder("powershell", "-NoP", "-NonInteractive", "-EncodedCommand", encodedScript);
+		}
+		else
+		{
+			powershellProcessBuilder = new ProcessBuilder("powershell", "-NoP", "-command", script);
+		}
+
+		// AFAIK, this is required to modify the current `conhost.exe` instance.
+		powershellProcessBuilder.redirectInput(ProcessBuilder.Redirect.INHERIT);
+		
+		Process powershellProcess = powershellProcessBuilder.start();
 		int powershellStatus = powershellProcess.waitFor();
 
 		if (powershellStatus != 0)
 		{
 			throw new Exception("Powershell script failed with status code " + powershellStatus + ".");
 		}
+
+		BufferedReader br = new BufferedReader(new InputStreamReader(powershellProcess.getInputStream()));
+		String ret = String.join("\n", br.lines().collect(Collectors.toList()));
+		br.close();
+		return ret;
 	}
 }
 
@@ -916,12 +934,15 @@ class ThreeDee
 			}
 		}
 
-		// Enter non-canonical mode (in a not-so-cross-platform way).
+		// Enter non-canonical (raw) mode.
 		if (IsWindows)
 		{
-			int consoleModeFlags = WindowsInterop.KERNEL32_ENABLE_LINE_INPUT | 
+			// Non-canonical mode is a console mode that requires Win32 API calls. Pure Java doesn't support native calls like this. But C# does. And with the help of Powershell, C# code can actually be executed inline.
+			// These flags are the ones that need to be disabled.
+			int consoleModeFlags = WindowsInterop.KERNEL32_ENABLE_LINE_INPUT |
 				WindowsInterop.KERNEL32_ENABLE_PROCESSED_INPUT |
 				WindowsInterop.KERNEL32_ENABLE_ECHO_INPUT;
+			// Run Powershell with a predefined script that can change the terminal to non-canonical mode.
 			WindowsInterop.runPowershellScript(WindowsInterop.getStdinModeChangePowershellScript(consoleModeFlags, false));
 		}
 		else
@@ -935,27 +956,12 @@ class ThreeDee
 		if (IsWindows)
 		{
 			// This is the worst way of retrieving the data, but that's just how Windows works.
-			// The terminal size is retrieved by the following PowerShell processes.
-			var widthProc = new ProcessBuilder("powershell", "-NoP", "-command", "$Host.ui.rawui.windowsize.width").redirectInput(ProcessBuilder.Redirect.INHERIT).start();
-			var heightProc = new ProcessBuilder("powershell", "-NoP", "-command", "$Host.ui.rawui.windowsize.height").redirectInput(ProcessBuilder.Redirect.INHERIT).start();
-			widthProc.waitFor();
-			heightProc.waitFor();
+			// There's no way of retrieving the terminal size without calling native Windows API's, which would require adding dependencies like JNI to this project, which is exactly what this project tries to avoid.
+			// The terminal size will be retrieved by Powershell instead. This time, no native API calling is required.
+			String[] sizeString = WindowsInterop.runPowershellScript("$Host.Ui.RawUi.WindowSize.ToString()").split(",");
 
-			BufferedReader widthReader = new BufferedReader(new InputStreamReader(widthProc.getInputStream()));
-			BufferedReader heightReader = new BufferedReader(new InputStreamReader(heightProc.getInputStream()));
-
-			String widthString = "", heightString = "", line = "";
-			while ((line = widthReader.readLine()) != null)
-			{
-				widthString += line;
-			}
-			while ((line = heightReader.readLine()) != null)
-			{
-				heightString += line;
-			}
-
-			int width = Integer.parseInt(widthString);
-			int height = Integer.parseInt(heightString);
+			int width = Integer.parseInt(sizeString[0]);
+			int height = Integer.parseInt(sizeString[1]);
 			
 			terminalSize = new Vector2i(width, height);
 		}
