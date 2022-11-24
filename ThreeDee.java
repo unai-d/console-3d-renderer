@@ -94,6 +94,11 @@ class Vector3f
 		return new Vector4f(X, Y, Z, w);
 	}
 
+	public Vector2f toVector2f()
+	{
+		return new Vector2f(X, Y);
+	}
+
 	public Vector3i toVector3i()
 	{
 		return new Vector3i((int) X, (int) Y, (int) Z);
@@ -433,8 +438,8 @@ class Framebuffer<T>
 
 	public void safeSet(Vector2i coord, T value)
 	{
-		if (coord.X > 0 && coord.X < bufferSize.X &&
-				coord.Y > 0 && coord.Y < bufferSize.Y)
+		if (coord.X >= 0 && coord.X < bufferSize.X &&
+			coord.Y >= 0 && coord.Y < bufferSize.Y)
 		{
 			buffer[coord.X + (coord.Y * bufferSize.X)] = value;
 		}
@@ -442,8 +447,8 @@ class Framebuffer<T>
 
 	public void safeSet(Vector3f coord, T value)
 	{
-		if (coord.X > 0 && coord.X < bufferSize.X &&
-			coord.Y > 0 && coord.Y < bufferSize.Y &&
+		if (coord.X >= 0 && coord.X < bufferSize.X &&
+			coord.Y >= 0 && coord.Y < bufferSize.Y &&
 			coord.Z > 0.1f && coord.Z < farPlane) // TODO: This should be handled by the shader.
 		{
 			int address = (int) coord.X + ((int) coord.Y * bufferSize.X);
@@ -463,7 +468,7 @@ class Framebuffer<T>
 	public void safeNdcPixelSet(float x, float y, float z, T value)
 	{
 		Vector3f fbc = ThreeDee.ndcToFbSize(x, y, z, bufferSize.X, bufferSize.Y);
-		if (fbc.Z > 0.1f && fbc.Z < farPlane) // TODO: Near/far planes.
+		if (fbc.Z > 0.1f && fbc.Z < farPlane) // TODO: Take near plane into account too.
 		{
 			safeSet((int) fbc.X + ((int) fbc.Y * bufferSize.X), value);
 		}
@@ -472,25 +477,6 @@ class Framebuffer<T>
 
 class BasicShaders
 {
-	/*static Vector2i[] line(Vector2i a, Vector2i b)
-	{
-		var xLen = Math.abs(Math.abs(a.X) - Math.abs(b.X));
-		var yLen = Math.abs(Math.abs(a.Y) - Math.abs(b.Y));
-
-		Vector2i[] ret;
-
-		ret = new Vector2i[Math.max(xLen, yLen)];
-		for (int i = 0; i < ret.length; i++)
-		{
-			float interpFactor = i / (float) ret.length;
-			int x = (int) (a.X * (1.0f - interpFactor) + b.X * interpFactor);
-			int y = (int) (a.Y * (1.0f - interpFactor) + b.Y * interpFactor);
-			ret[i] = new Vector2i(x, y);
-		}
-
-		return ret;
-	}*/
-
 	static Vector3f[] line(Vector3f a, Vector3f b)
 	{
 		float xLen = Math.abs(Math.abs(a.X) + Math.abs(b.X));
@@ -517,10 +503,15 @@ class BasicShaders
 		list.toArray(ret);
 		return ret;
 	}
-	
-	static float edgeFunction(Vector3f a, Vector3f b, float x, float y)
+
+	static float edgeFunction(Vector3f a, Vector3f b, Vector3f c)
 	{
-		return ((x - a.X) * (b.Y - a.Y) - (y - a.Y) * (b.X - a.X));
+		return edgeFunction(a.toVector2f(), b.toVector2f(), c.toVector2f());
+	}
+	
+	static float edgeFunction(Vector2f a, Vector2f b, Vector2f c)
+	{
+		return ((c.X - a.X) * (b.Y - a.Y) - (c.Y - a.Y) * (b.X - a.X));
 	}
 
 	// TODO: Should this be a framebuffer method?
@@ -535,30 +526,30 @@ class BasicShaders
 		float startZ = Math.min(Math.min(a.Z, b.Z), Math.min(c.Z, Float.MAX_VALUE));
 		float endZ = Math.max(Math.max(a.Z, b.Z), Math.max(c.Z, 0));
 
-		// Check if triangle is behind the camera or too far away.
-		if (endZ < 0.01f || startZ > 100.0f)
-		{
-			return new XYZUV[] {};
-		}
-		// Check if triangle is outside of the bound of the framebuffer.
-		if ((endX < 0 || startX > framebufferSize.X) && (endY < 0 || startY > framebufferSize.Y))
+		// Check if:
+		//   1. The triangle is behind the camera or too far away.
+		//   2. The triangle is outside of the bounds of the framebuffer.
+		// If one or both of them is true, do not render the triangle; return an empty fragment array.
+		if ((endZ < 0.01f || startZ > 100.0f) ||
+			((endX < 0 || startX > framebufferSize.X) && (endY < 0 || startY > framebufferSize.Y)))
 		{
 			return new XYZUV[] {};
 		}
 
 		List<XYZUV> list = new ArrayList<XYZUV>();
 		
-		float area = edgeFunction(a, b, c.X, c.Y);
+		float area = edgeFunction(a, b, c);
 
 		for (int y = (int) Math.max(0, startY); y < Math.min(framebufferSize.Y, endY); y++)
 		{
 			for (int x = (int) Math.max(0, startX); x < Math.min(framebufferSize.X, endX); x++)
 			{
-				float w0 = edgeFunction(a, b, x, y);
-				float w1 = edgeFunction(b, c, x, y);
-				float w2 = edgeFunction(c, a, x, y);
+				Vector3f framebufferPoint = new Vector3f(x, y, 0);
+				float w0 = edgeFunction(a, b, framebufferPoint);
+				float w1 = edgeFunction(b, c, framebufferPoint);
+				float w2 = edgeFunction(c, a, framebufferPoint);
 
-				// If `x` and `y` are inside the triangle (between `a`, `b` and `c`).
+				// If `framebufferPoint` is inside the triangle (between `a`, `b` and `c`).
 				if (w0 >= 0 && w1 >= 0 && w2 >= 0)
 				{
 					w0 /= area;
@@ -595,13 +586,15 @@ class XYZUV
 
 enum ConsoleRenderMode
 {
+	// Single block character modes:
 	B0W1, // Black=0, white=1
 	B1W0, // Black=1, white=0
+	// Grayscale block characters modes:
 	GrayscaleChars, // This uses the shaded block Unicode characters without ANSI color escape codes.
-	RGB4, // This uses the standard and widely-supported 4-bit ANSI color escape codes.
-	RGB8, // This uses the paletted 216-color version of the last one.
-	Grayscale24,
-	RGB24
+	// Single block character with ANSI/VT100 color codes:
+	RGB4, // This uses the standard and widely-supported 4-bit ANSI color escape codes (16 colors).
+	RGB8, // This uses the paletted 216-color version of the last one (216 colors).
+	RGB24, // This uses the 24-bit color version of the last one (16,777,216 colors).
 }
 
 class WindowsInterop
@@ -1274,9 +1267,9 @@ class ThreeDee
 			}
 
 			// Print status text on top of the rendered scene.
-			setConsoleCursorPosition(2, terminalSize.Y - 1);
+			setConsoleCursorPosition(0, terminalSize.Y - 1);
 			System.out.print(getAnsiCodeForFgRgb24(new Vector3i(255, 255, 255)));
-			System.out.print("Frame " + frame + " | " + framesPerSecond + " FPS | " + trianglesPerFrame + " triangles  ");
+			System.out.print("\u001b[K  Frame " + frame + " | " + framesPerSecond + " FPS | " + trianglesPerFrame + " triangles | Press 'q' to exit");
 
 			// Update frame data.
 			frame++;
@@ -1297,6 +1290,7 @@ class ThreeDee
 		setConsoleCursorPosition(0, 0);
 		
 		// Revert changes to the terminal input mode (canonical mode is a must-have when returning to the shell).
+		// From my experience, this is not really necessary in Windows since both `cmd.exe` and Powershell seem to revert back to canonical mode automatically.
 		if (!IsWindows)
 		{
 			String[] canonicalModeCmdUnix = { "/bin/sh", "-c", "stty cooked < /dev/tty" };
