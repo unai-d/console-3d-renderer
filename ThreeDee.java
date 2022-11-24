@@ -697,6 +697,7 @@ class ThreeDee
 {
 	static String textureFile = null;
 	static boolean showLines = false;
+	static boolean showVertices = false;
 	static ConsoleRenderMode consoleRenderMode = ConsoleRenderMode.RGB24;
 
 	static Framebuffer<Vector3i> framebuffer;
@@ -928,6 +929,10 @@ class ThreeDee
 					showLines = true;
 					break;
 
+				case "--show-vertices":
+					showVertices = true;
+					break;
+
 				case "--color-mode":
 					consoleRenderMode = Enum.valueOf(ConsoleRenderMode.class, argkv[1]);
 					break;
@@ -1139,11 +1144,15 @@ class ThreeDee
 					}
 				}
 
-				// TODO: Draw triangle vertices.
-				//safeSet(framebuffer, fbc1.X + (fbc1.Y * terminalSize.X), 'o');
-				/*framebuffer.safeSet(fbc1, new Vector3i(255, 0, 0));
-				framebuffer.safeSet(fbc2, new Vector3i(255, 0, 0));
-				framebuffer.safeSet(fbc3, new Vector3i(255, 0, 0));*/
+				// Draw triangle vertices.
+				if (showVertices)
+				{
+					Vector3i vertexColor = new Vector3i(255, 0, 255);
+
+					framebuffer.safeNdcPixelSet(vector1, vertexColor);
+					framebuffer.safeNdcPixelSet(vector2, vertexColor);
+					framebuffer.safeNdcPixelSet(vector3, vertexColor);
+				}
 			}
 
 			////////////////////////
